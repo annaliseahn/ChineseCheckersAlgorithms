@@ -8,10 +8,23 @@ import numpy as np
 from engine import BOARD_SIDE, create_board, get_valid_moves, make_move
 from features import NUM_FEATURES, feature_vector
 
+# AI usage (Claude, via Claude Code):
+# - Explained how to adapt my A3 tabular SARSA to linear TD(0) for a two-player game: learning
+#   values of afterstates with V = w . phi, per-player previous states in self-play, terminal
+#   targets of +1/-1/0, epsilon-greedy exploration only during training, and how the team's
+#   engine/features/harness interfaces work (e.g. rng, board.turn, board.winner, TDAgent.load).
+# - Suggested design details: scaling features by SCALE = (72, 6, 12), +-1000000 scores so a
+#   winning move is always chosen, gamma = 1 and a small alpha.
+# - Gave pseudo-code, reviewed and debugged my code (pointed out
+#   bugs such as scoring the old board, wrong indentation, and multiplying by the weight instead
+#   of the feature), and ran test training / harness games.
+# All code in this file was written by me.
+
 SCALE = (72, 6, 12)
 
 
 def phi(board, player):
+    """Scaled features from player's view."""
     f = feature_vector(board, player)
     x = []
     for i in range(NUM_FEATURES):
@@ -20,7 +33,10 @@ def phi(board, player):
 
 
 class TDAgent:
+    """Linear TD(0) self-play agent."""
+
     def __init__(self, weight=None, gamma=1, epsilon=0.1, alpha=0.01, name="TD"):
+        """Weights, hyperparameters, counters."""
         if weight is None:
             self.weight = [0, 0, 0]
         else:
@@ -34,12 +50,13 @@ class TDAgent:
         self.train_seconds = 0.0
 
     def calc_value(self, board, player):
+        """weight . phi"""
         x = phi(board, player)
         y = np.dot(self.weight, x)
         return y
 
     def choose_move(self, board, rng):
-        """With probability epsilon pick a random action, otherwise the best-known one."""
+        """Greedy move (harness)."""
         moves = get_valid_moves(board)
         self.last_nodes = len(moves)
         best_value = float("-inf")
@@ -64,6 +81,7 @@ class TDAgent:
         return rng.choice(best_moves)
 
     def egreedy(self, board, rng):
+        """Epsilon-greedy move (training)."""
         if rng.random() < self.epsilon:
             moves = get_valid_moves(board)
             return rng.choice(moves)
@@ -71,6 +89,7 @@ class TDAgent:
             return self.choose_move(board, rng)
 
     def update(self, board, player, target):
+        """TD update toward target."""
         x = phi(board, player)
         value = self.calc_value(board, player)
         error = target - value
@@ -78,6 +97,7 @@ class TDAgent:
             self.weight[i] += self.alpha * error * x[i]
 
     def self_play_episode(self, rng):
+        """One self-play game; returns winner."""
         board = create_board()
         prev = [None, None]
         while True:
@@ -101,6 +121,7 @@ class TDAgent:
             prev[q] = board
 
     def train(self, episodes, seed=0, log_every=500):
+        """Train and record episodes/time."""
         rng = random.Random(seed)
         start = time.perf_counter()
         for n in range(1, episodes + 1):
@@ -111,6 +132,7 @@ class TDAgent:
         self.train_seconds += time.perf_counter() - start
 
     def save(self, path="td_weights.json"):
+        """Save to JSON."""
         data = {
             "weight": self.weight,
             "episodes": self.episodes,
@@ -124,6 +146,7 @@ class TDAgent:
 
     @classmethod
     def load(cls, path="td_weights.json"):
+        """Load from JSON."""
         with open(path) as f:
             data = json.load(f)
             agent = cls(
